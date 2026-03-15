@@ -145,7 +145,7 @@ def tool_query_api(method: str, path: str, body: str | None = None) -> str:
     url = f"{AGENT_API_BASE_URL}{path}"
     headers: dict[str, str] = {}
     if LMS_API_KEY:
-        headers["X-API-Key"] = LMS_API_KEY
+        headers["Authorization"] = f"Bearer {LMS_API_KEY}"
     try:
         response = httpx.request(
             method=method.upper(),
@@ -176,7 +176,7 @@ def call_llm(messages: list[dict]) -> dict:
             "messages": messages,
             "tools": TOOLS,
         },
-        timeout=60,
+        timeout=120,
     )
     response.raise_for_status()
     return response.json()
@@ -260,7 +260,15 @@ def main() -> None:
             answer_text = f"Error: {e}"
 
     # Strip <think>...</think> tags from reasoning models
+    raw_answer = answer_text
     answer_text = re.sub(r"<think>[\s\S]*?</think>\s*", "", answer_text).strip()
+    # If stripping think tags left nothing, extract content from within the tags
+    if not answer_text and raw_answer:
+        think_match = re.search(r"<think>([\s\S]*?)</think>", raw_answer)
+        if think_match:
+            answer_text = think_match.group(1).strip()
+        else:
+            answer_text = raw_answer.strip()
 
     # Extract source from read_file calls
     source = ""
