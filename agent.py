@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -199,51 +200,67 @@ def main() -> None:
 
     tool_call_log: list[dict] = []
     total_tool_calls = 0
+    answer_text = ""
 
-    while True:
-        print(f"Calling {MODEL}... (tool calls so far: {total_tool_calls})", file=sys.stderr)
-        data = call_llm(messages)
-        choice = data["choices"][0]
-        message = choice["message"]
+    try:
+        while True:
+            print(f"Calling {MODEL}... (tool calls so far: {total_tool_calls})", file=sys.stderr)
+            data = call_llm(messages)
+            choice = data["choices"][0]
+            message = choice["message"]
 
-        # Add assistant message to conversation
-        messages.append(message)
+            # Add assistant message to conversation
+            messages.append(message)
 
-        # Check if the LLM wants to call tools
-        if message.get("tool_calls") and total_tool_calls < MAX_TOOL_CALLS:
-            for tc in message["tool_calls"]:
-                func_name = tc["function"]["name"]
-                func_args = json.loads(tc["function"]["arguments"])
-                tool_call_id = tc["id"]
+            # Check if the LLM wants to call tools
+            if message.get("tool_calls") and total_tool_calls < MAX_TOOL_CALLS:
+                for tc in message["tool_calls"]:
+                    func_name = tc["function"]["name"]
+                    tool_call_id = tc.get("id", f"call_{total_tool_calls}")
 
-                print(f"  Tool: {func_name}({func_args})", file=sys.stderr)
+                    try:
+                        func_args = json.loads(tc["function"]["arguments"])
+                    except (json.JSONDecodeError, TypeError):
+                        func_args = {}
 
-                handler = TOOL_DISPATCH.get(func_name)
-                if handler is None:
-                    result_str = f"Error: unknown tool: {func_name}"
-                else:
-                    result_str = handler(**func_args)
+                    print(f"  Tool: {func_name}({func_args})", file=sys.stderr)
 
-                tool_call_log.append({
-                    "tool": func_name,
-                    "args": func_args,
-                    "result": result_str[:500],
-                })
+                    handler = TOOL_DISPATCH.get(func_name)
+                    if handler is None:
+                        result_str = f"Error: unknown tool: {func_name}"
+                    else:
+                        try:
+                            result_str = handler(**func_args)
+                        except Exception as e:
+                            result_str = f"Error executing {func_name}: {e}"
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": result_str,
-                })
+                    tool_call_log.append({
+                        "tool": func_name,
+                        "args": func_args,
+                        "result": result_str[:500],
+                    })
 
-                total_tool_calls += 1
-                if total_tool_calls >= MAX_TOOL_CALLS:
-                    print("  Max tool calls reached.", file=sys.stderr)
-                    break
-        else:
-            # Final text answer
-            answer_text = (message.get("content") or "")
-            break
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": result_str,
+                    })
+
+                    total_tool_calls += 1
+                    if total_tool_calls >= MAX_TOOL_CALLS:
+                        print("  Max tool calls reached.", file=sys.stderr)
+                        break
+            else:
+                # Final text answer
+                answer_text = (message.get("content") or "")
+                break
+    except Exception as e:
+        print(f"Error during agent loop: {e}", file=sys.stderr)
+        if not answer_text:
+            answer_text = f"Error: {e}"
+
+    # Strip <think>...</think> tags from reasoning models
+    answer_text = re.sub(r"<think>[\s\S]*?</think>\s*", "", answer_text).strip()
 
     # Extract source from read_file calls
     source = ""
