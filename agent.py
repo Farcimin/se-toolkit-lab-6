@@ -20,7 +20,7 @@ AGENT_API_BASE_URL = os.environ.get("AGENT_API_BASE_URL", "http://localhost:4200
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-MAX_TOOL_CALLS = 10
+MAX_TOOL_CALLS = 15
 
 SYSTEM_PROMPT = """\
 You are a system agent for a Learning Management Service project. \
@@ -106,6 +106,10 @@ TOOLS = [
                         "type": "string",
                         "description": "Optional JSON request body.",
                     },
+                    "authenticated": {
+                        "type": "boolean",
+                        "description": "Whether to send the API key in the Authorization header. Defaults to true. Set to false to test unauthenticated access.",
+                    },
                 },
                 "required": ["method", "path"],
             },
@@ -141,10 +145,10 @@ def tool_list_files(path: str) -> str:
     return "\n".join(entries)
 
 
-def tool_query_api(method: str, path: str, body: str | None = None) -> str:
+def tool_query_api(method: str, path: str, body: str | None = None, authenticated: bool = True) -> str:
     url = f"{AGENT_API_BASE_URL}{path}"
     headers: dict[str, str] = {}
-    if LMS_API_KEY:
+    if authenticated and LMS_API_KEY:
         headers["Authorization"] = f"Bearer {LMS_API_KEY}"
     try:
         response = httpx.request(
